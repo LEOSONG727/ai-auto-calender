@@ -18,23 +18,41 @@ import { DurationChip, LoadingDots, PriorityBadge, eventTypeConfig } from "@/com
 export function MobileToday({
   events,
   suggestions,
+  onCapture,
 }: {
   events: CalendarEvent[];
   suggestions: ScheduleSuggestion[];
+  onCapture: (text: string) => Promise<void> | void;
 }) {
   const [sheet, setSheet] = useState<ScheduleSuggestion | null>(null);
-  const [captureState, setCaptureState] = useState<"idle" | "typing" | "saved" | "parsing" | "parsed">("idle");
+  const [captureState, setCaptureState] = useState<"idle" | "typing" | "saved" | "parsing" | "parsed" | "error">("idle");
   const [captureValue, setCaptureValue] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const pending = suggestions.filter((suggestion) => suggestion.status === "pending");
   const visibleEvents = events.filter((event) => !event.pastEvent).slice(0, 5);
 
-  const handleCapture = () => {
-    if (!captureValue.trim()) return;
+  const handleCapture = async () => {
+    const text = captureValue.trim();
+    if (!text || submitting) return;
+
     setCaptureValue("");
     setCaptureState("saved");
-    window.setTimeout(() => setCaptureState("parsing"), 500);
-    window.setTimeout(() => setCaptureState("parsed"), 1900);
-    window.setTimeout(() => setCaptureState("idle"), 3600);
+    setSubmitting(true);
+
+    const parsingTimer = window.setTimeout(() => {
+      setCaptureState((current) => (current === "saved" ? "parsing" : current));
+    }, 420);
+
+    try {
+      await onCapture(text);
+      setCaptureState("parsed");
+    } catch {
+      setCaptureState("error");
+    } finally {
+      window.clearTimeout(parsingTimer);
+      setSubmitting(false);
+      window.setTimeout(() => setCaptureState("idle"), 2600);
+    }
   };
 
   return (
@@ -61,8 +79,9 @@ export function MobileToday({
                 setCaptureState(event.target.value ? "typing" : "idle");
               }}
               onKeyDown={(event) => {
-                if (event.key === "Enter") handleCapture();
+                if (event.key === "Enter") void handleCapture();
               }}
+              disabled={submitting}
               placeholder="생각나는 대로 적어두세요..."
               aria-label="모바일 일정 입력"
             />
@@ -84,6 +103,7 @@ export function MobileToday({
                 <Sparkles size={12} /> 제안이 생겼어요
               </span>
             ) : null}
+            {captureState === "error" ? <span className="state-error">저장 실패</span> : null}
           </div>
 
           <section className="mobile-next">

@@ -1,18 +1,16 @@
 "use client";
 
-import { useState } from "react";
 import { Info, Sparkles, X } from "lucide-react";
-import { initialInboxItems } from "@/lib/calendar-data";
 import type { InboxItem } from "@/lib/calendar-data";
 import { LoadingDots } from "@/components/ui-primitives";
 
-export function InboxScreen() {
-  const [items, setItems] = useState<InboxItem[]>(initialInboxItems);
-
-  const remove = (id: string) => {
-    setItems((current) => current.filter((item) => item.id !== id));
-  };
-
+export function InboxScreen({
+  items,
+  onDelete,
+}: {
+  items: InboxItem[];
+  onDelete: (id: string) => Promise<void> | void;
+}) {
   return (
     <main className="inbox-screen" data-screen-label="Inbox">
       <header className="screen-header stacked">
@@ -36,7 +34,7 @@ export function InboxScreen() {
                   <p>&quot;{item.raw}&quot;</p>
                   <time>{item.time}</time>
                 </div>
-                <button type="button" className="icon-button" onClick={() => remove(item.id)} aria-label="항목 삭제">
+                <button type="button" className="icon-button" onClick={() => void onDelete(item.id)} aria-label="항목 삭제">
                   <X size={15} />
                 </button>
               </div>
@@ -58,7 +56,7 @@ export function InboxScreen() {
                   <div className="inbox-actions">
                     <button type="button">이번 주 안에</button>
                     <button type="button">다음 주에</button>
-                    <button type="button" onClick={() => remove(item.id)}>
+                    <button type="button" onClick={() => void onDelete(item.id)}>
                       보류
                     </button>
                   </div>
@@ -82,10 +80,10 @@ export function InboxScreen() {
                     <button type="button" className="primary-button compact">
                       제안 보기
                     </button>
-                    <button type="button" onClick={() => remove(item.id)}>
+                    <button type="button" onClick={() => void onDelete(item.id)}>
                       보류
                     </button>
-                    <button type="button" onClick={() => remove(item.id)} aria-label="삭제">
+                    <button type="button" onClick={() => void onDelete(item.id)} aria-label="삭제">
                       <X size={14} />
                     </button>
                   </div>

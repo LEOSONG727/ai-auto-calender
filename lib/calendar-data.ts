@@ -19,6 +19,7 @@ export interface CalendarEvent {
   id: string;
   title: string;
   type: CalendarEventType;
+  date?: string;
   start: string;
   end: string;
   duration: number;
@@ -29,10 +30,15 @@ export interface CalendarEvent {
 
 export interface ScheduleSuggestion {
   id: string;
+  taskId?: string;
   linkedEventId?: string;
   title: string;
   type: SuggestionType;
   priority: Priority;
+  scheduledDate?: string;
+  scheduledStart?: string;
+  scheduledEnd?: string;
+  confidence?: number;
   suggestedTime: string;
   duration: string;
   reason: string;
@@ -74,6 +80,59 @@ export interface InboxItem {
     type: SuggestionType;
     when: string;
   };
+}
+
+export type TaskStatus = "inbox" | "suggested" | "scheduled" | "deferred" | "dismissed";
+export type TaskEnergy = "low" | "medium" | "high";
+export type FeedbackDecision = "approved" | "deferred" | "dismissed" | "edited";
+
+export interface CalendarTask {
+  id: string;
+  raw: string;
+  title: string;
+  durationMinutes: number;
+  priority: Priority;
+  energy: TaskEnergy;
+  status: TaskStatus;
+  createdAt: string;
+  deadlineLabel?: string;
+  deadlineDayOffset?: number;
+  scheduledDate?: string;
+  scheduledStart?: string;
+  scheduledEnd?: string;
+  lastDecision?: FeedbackDecision;
+}
+
+export interface ScheduleFeedback {
+  id: string;
+  taskId?: string;
+  suggestionId: string;
+  decision: FeedbackDecision;
+  decidedAt: string;
+  originalTime?: string;
+  selectedTime?: string;
+  note?: string;
+}
+
+export interface SchedulerPreferences {
+  workdayStart: string;
+  workdayEnd: string;
+  focusStart: string;
+  focusEnd: string;
+  lunchStart: string;
+  lunchEnd: string;
+  bufferMinutes: number;
+  defaultTaskDurationMinutes: number;
+}
+
+export interface CalendarState {
+  events: CalendarEvent[];
+  suggestions: ScheduleSuggestion[];
+  deadlines: DeadlineItem[];
+  inboxItems: InboxItem[];
+  tasks: CalendarTask[];
+  feedback: ScheduleFeedback[];
+  preferences: SchedulerPreferences;
 }
 
 export const initialEvents: CalendarEvent[] = [
@@ -267,3 +326,24 @@ export const initialInboxItems: InboxItem[] = [
     time: "방금",
   },
 ];
+
+export const defaultSchedulerPreferences: SchedulerPreferences = {
+  workdayStart: "08:00",
+  workdayEnd: "19:00",
+  focusStart: "09:00",
+  focusEnd: "11:00",
+  lunchStart: "12:00",
+  lunchEnd: "13:00",
+  bufferMinutes: 15,
+  defaultTaskDurationMinutes: 45,
+};
+
+export const initialCalendarState: CalendarState = {
+  events: initialEvents,
+  suggestions: initialSuggestions,
+  deadlines,
+  inboxItems: initialInboxItems,
+  tasks: [],
+  feedback: [],
+  preferences: defaultSchedulerPreferences,
+};

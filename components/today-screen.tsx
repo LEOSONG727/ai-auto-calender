@@ -107,9 +107,10 @@ function NextActionCard({ event }: { event?: CalendarEvent }) {
   );
 }
 
-function QuickCapture({ onCapture }: { onCapture: (text: string) => void }) {
+function QuickCapture({ onCapture }: { onCapture: (text: string) => Promise<void> | void }) {
   const [value, setValue] = useState("");
-  const [state, setState] = useState<"idle" | "typing" | "saved" | "parsing" | "parsed">("idle");
+  const [state, setState] = useState<"idle" | "typing" | "saved" | "parsing" | "parsed" | "error">("idle");
+  const [submitting, setSubmitting] = useState(false);
   const inputRef = useRef<HTMLTextAreaElement>(null);
 
   useEffect(() => {
@@ -117,19 +118,29 @@ function QuickCapture({ onCapture }: { onCapture: (text: string) => void }) {
     return () => window.clearTimeout(timer);
   }, []);
 
-  const submit = useCallback(() => {
+  const submit = useCallback(async () => {
     const text = value.trim();
-    if (!text) return;
+    if (!text || submitting) return;
 
     setValue("");
     setState("saved");
-    window.setTimeout(() => setState("parsing"), 650);
-    window.setTimeout(() => {
+    setSubmitting(true);
+
+    const parsingTimer = window.setTimeout(() => {
+      setState((current) => (current === "saved" ? "parsing" : current));
+    }, 420);
+
+    try {
+      await onCapture(text);
       setState("parsed");
-      onCapture(text);
-    }, 2200);
-    window.setTimeout(() => setState("idle"), 4600);
-  }, [onCapture, value]);
+    } catch {
+      setState("error");
+    } finally {
+      window.clearTimeout(parsingTimer);
+      setSubmitting(false);
+      window.setTimeout(() => setState("idle"), 2600);
+    }
+  }, [onCapture, submitting, value]);
 
   const active = state !== "idle" && state !== "typing";
 
@@ -148,14 +159,15 @@ function QuickCapture({ onCapture }: { onCapture: (text: string) => void }) {
           onKeyDown={(event) => {
             if (event.key === "Enter" && !event.shiftKey) {
               event.preventDefault();
-              submit();
+              void submit();
             }
           }}
+          disabled={submitting}
           placeholder="지금 떠오르는 일을 적어두세요..."
           aria-label="일정이나 할 일 입력"
         />
         {value.trim() ? (
-          <button type="button" className="send-button" onClick={submit} aria-label="입력 저장">
+          <button type="button" className="send-button" onClick={() => void submit()} disabled={submitting} aria-label="입력 저장">
             <Send size={14} />
           </button>
         ) : null}
@@ -180,6 +192,12 @@ function QuickCapture({ onCapture }: { onCapture: (text: string) => void }) {
             제안이 생겼어요
           </span>
         ) : null}
+        {state === "error" ? (
+          <span className="state-error">
+            <AlertTriangle size={13} aria-hidden="true" />
+            저장하지 못했어요
+          </span>
+        ) : null}
       </div>
     </section>
   );
@@ -196,16 +214,20 @@ function SuggestionCard({
   suggestion: ScheduleSuggestion;
   isExpanded: boolean;
   onToggle: () => void;
-  onApprove: (id: string) => void;
-  onDefer: (id: string, when: "later_today" | "tomorrow" | "this_week" | "pick") => void;
-  onDelete: (id: string) => void;
+  onApprove: (id: string) => Promise<void> | void;
+  onDefer: (id: string, when: "later_today" | "tomorrow" | "this_week" | "pick") => Promise<void> | void;
+  onDelete: (id: string) => Promise<void> | void;
 }) {
   const [approving, setApproving] = useState(false);
   const [deferOpen, setDeferOpen] = useState(false);
 
-  const handleApprove = () => {
+  const handleApprove = async () => {
     setApproving(true);
-    window.setTimeout(() => onApprove(suggestion.id), 620);
+    try {
+      await onApprove(suggestion.id);
+    } finally {
+      setApproving(false);
+    }
   };
 
   if (approving) {
@@ -252,7 +274,7 @@ function SuggestionCard({
             </div>
           </div>
           <div className="suggestion-actions">
-            <button type="button" className="primary-button" onClick={handleApprove}>
+            <button type="button" className="primary-button" onClick={() => void handleApprove()}>
               승인
             </button>
             <div className="defer-wrap">
@@ -263,12 +285,12 @@ function SuggestionCard({
                 <DeferMenu
                   onSelect={(value) => {
                     setDeferOpen(false);
-                    onDefer(suggestion.id, value);
+                    void onDefer(suggestion.id, value);
                   }}
                 />
               ) : null}
             </div>
-            <button type="button" className="ghost-button" onClick={() => onDelete(suggestion.id)}>
+            <button type="button" className="ghost-button" onClick={() => void onDelete(suggestion.id)}>
               삭제
             </button>
           </div>
@@ -305,9 +327,9 @@ function AIPanel({
 }: {
   suggestions: ScheduleSuggestion[];
   deadlines: DeadlineItem[];
-  onApprove: (id: string) => void;
-  onDefer: (id: string, when: "later_today" | "tomorrow" | "this_week" | "pick") => void;
-  onDelete: (id: string) => void;
+  onApprove: (id: string) => Promise<void> | void;
+  onDefer: (id: string, when: "later_today" | "tomorrow" | "this_week" | "pick") => Promise<void> | void;
+  onDelete: (id: string) => Promise<void> | void;
 }) {
   const [expandedId, setExpandedId] = useState<string | null>(suggestions[0]?.id ?? null);
 
@@ -374,13 +396,16 @@ export function TodayScreen({
   events: CalendarEvent[];
   suggestions: ScheduleSuggestion[];
   deadlines: DeadlineItem[];
-  onCapture: (text: string) => void;
-  onApprove: (id: string) => void;
-  onDefer: (id: string, when: "later_today" | "tomorrow" | "this_week" | "pick") => void;
-  onDelete: (id: string) => void;
+  onCapture: (text: string) => Promise<void> | void;
+  onApprove: (id: string) => Promise<void> | void;
+  onDefer: (id: string, when: "later_today" | "tomorrow" | "this_week" | "pick") => Promise<void> | void;
+  onDelete: (id: string) => Promise<void> | void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const nextEvent = events.find((event) => event.upcoming);
+  const focusMinutes = events
+    .filter((event) => event.type === "protected")
+    .reduce((total, event) => total + event.duration, 0);
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -398,7 +423,9 @@ export function TodayScreen({
           </div>
           <div className="today-stats">
             <time>오전 10:45</time>
-            <span>일정 4개 · 집중 2시간 확보</span>
+            <span>
+              일정 {events.length}개 · 집중 {Math.round(focusMinutes / 60)}시간 확보
+            </span>
           </div>
         </header>
         <QuickCapture onCapture={onCapture} />

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Sidebar } from "@/components/sidebar";
 import { TodayScreen } from "@/components/today-screen";
 import { WeeklyScreen } from "@/components/weekly-screen";
@@ -9,13 +9,12 @@ import { PreferencesScreen } from "@/components/preferences-screen";
 import { MobileToday } from "@/components/mobile-today";
 import { ComponentsScreen } from "@/components/components-screen";
 import { Toast } from "@/components/ui-primitives";
-import {
-  deadlines,
-  initialEvents,
-  initialSuggestions,
-} from "@/lib/calendar-data";
+import { initialCalendarState } from "@/lib/calendar-data";
 import type {
   CalendarEvent,
+  CalendarState,
+  DeadlineItem,
+  InboxItem,
   ScheduleSuggestion,
   ScreenId,
 } from "@/lib/calendar-data";
@@ -26,10 +25,18 @@ interface ToastState {
   onAction?: () => void;
 }
 
+interface CalendarApiResponse {
+  state?: CalendarState;
+  [key: string]: unknown;
+}
+
 export function CalendarApp() {
   const [screen, setScreen] = useState<ScreenId>("today");
-  const [events, setEvents] = useState<CalendarEvent[]>(initialEvents);
-  const [suggestions, setSuggestions] = useState<ScheduleSuggestion[]>(initialSuggestions);
+  const [events, setEvents] = useState<CalendarEvent[]>(initialCalendarState.events);
+  const [suggestions, setSuggestions] = useState<ScheduleSuggestion[]>(initialCalendarState.suggestions);
+  const [deadlines, setDeadlines] = useState<DeadlineItem[]>(initialCalendarState.deadlines);
+  const [inboxItems, setInboxItems] = useState<InboxItem[]>(initialCalendarState.inboxItems);
+  const [syncState, setSyncState] = useState<"loading" | "ready" | "error">("loading");
   const [toast, setToast] = useState<ToastState | null>(null);
 
   const showToast = useCallback((message: string, action?: string, onAction?: () => void) => {
@@ -37,73 +44,127 @@ export function CalendarApp() {
     window.setTimeout(() => setToast(null), 3800);
   }, []);
 
-  const handleCapture = useCallback((text: string) => {
-    const id = `s-${Date.now()}`;
-    const title = text.length > 26 ? `${text.slice(0, 26)}...` : text;
-
-    setSuggestions((current) => [
-      {
-        id,
-        title,
-        type: "task",
-        priority: "medium",
-        suggestedTime: "내일 오전 10:00",
-        duration: "30분",
-        reason: "오늘 일정이 꽉 차 있어서 내일 오전으로 배치했어요. 15분 회의 버퍼 이후 슬롯이에요.",
-        personalization: null,
-        alternatives: ["모레 오전", "이번 주 내"],
-        status: "pending",
-      },
-      ...current,
-    ]);
+  const applyState = useCallback((state: CalendarState) => {
+    setEvents(state.events);
+    setSuggestions(state.suggestions);
+    setDeadlines(state.deadlines);
+    setInboxItems(state.inboxItems);
   }, []);
 
-  const handleApprove = useCallback(
-    (id: string) => {
-      const suggestion = suggestions.find((item) => item.id === id);
-      setSuggestions((current) => current.filter((item) => item.id !== id));
+  const requestJson = useCallback(
+    async (url: string, init?: RequestInit) => {
+      const response = await fetch(url, {
+        ...init,
+        headers: {
+          "Content-Type": "application/json",
+          ...(init?.headers ?? {}),
+        },
+      });
+      const payload = (await response.json()) as CalendarApiResponse;
 
-      if (suggestion?.linkedEventId) {
-        setEvents((current) =>
-          current.map((event) =>
-            event.id === suggestion.linkedEventId ? { ...event, type: "aiApproved" } : event,
-          ),
-        );
+      if (!response.ok) {
+        throw new Error(typeof payload.error === "string" ? payload.error : "request failed");
       }
 
-      showToast("캘린더에 추가됐어요", "되돌리기", () => {
-        if (!suggestion) return;
-        setSuggestions((current) => [{ ...suggestion, status: "pending" }, ...current]);
-        if (suggestion.linkedEventId) {
-          setEvents((current) =>
-            current.map((event) =>
-              event.id === suggestion.linkedEventId ? { ...event, type: "aiPending" } : event,
-            ),
-          );
-        }
-      });
+      if (payload.state) {
+        applyState(payload.state);
+      }
+
+      return payload;
     },
-    [showToast, suggestions],
+    [applyState],
+  );
+
+  useEffect(() => {
+    let alive = true;
+
+    requestJson("/api/calendar-state")
+      .then(() => {
+        if (alive) setSyncState("ready");
+      })
+      .catch(() => {
+        if (!alive) return;
+        setSyncState("error");
+        showToast("저장된 데이터를 불러오지 못했어요");
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [requestJson, showToast]);
+
+  const handleCapture = useCallback(
+    async (text: string) => {
+      try {
+        const payload = await requestJson("/api/capture", {
+          method: "POST",
+          body: JSON.stringify({ text }),
+        });
+        const task = payload.task as { title?: string } | undefined;
+        showToast(task?.title ? `${task.title} 제안이 생겼어요` : "새 제안이 생겼어요");
+      } catch {
+        showToast("입력을 저장하지 못했어요");
+        throw new Error("capture failed");
+      }
+    },
+    [requestJson, showToast],
+  );
+
+  const handleApprove = useCallback(
+    async (id: string) => {
+      try {
+        const payload = await requestJson(`/api/suggestions/${id}/approve`, {
+          method: "POST",
+        });
+        showToast(payload.event ? "캘린더에 추가됐어요" : "제안을 승인했어요");
+      } catch {
+        showToast("승인하지 못했어요");
+      }
+    },
+    [requestJson, showToast],
   );
 
   const handleDefer = useCallback(
-    (id: string, when: "later_today" | "tomorrow" | "this_week" | "pick") => {
-      const labels = {
-        later_today: "오늘 나중에",
-        tomorrow: "내일",
-        this_week: "이번 주 안에",
-        pick: "선택한 날",
-      };
-
-      setSuggestions((current) => current.filter((item) => item.id !== id));
-      showToast(`${labels[when]}로 미뤘어요`);
+    async (id: string, when: "later_today" | "tomorrow" | "this_week" | "pick") => {
+      try {
+        const payload = await requestJson(`/api/suggestions/${id}/defer`, {
+          method: "POST",
+          body: JSON.stringify({ when }),
+        });
+        showToast(`${payload.deferredTo ?? "나중"}로 미뤘어요`);
+      } catch {
+        showToast("미루지 못했어요");
+      }
     },
-    [showToast],
+    [requestJson, showToast],
   );
 
-  const handleDelete = useCallback((id: string) => {
-    setSuggestions((current) => current.filter((item) => item.id !== id));
-  }, []);
+  const handleDelete = useCallback(
+    async (id: string) => {
+      try {
+        await requestJson(`/api/suggestions/${id}`, {
+          method: "DELETE",
+        });
+        showToast("제안을 삭제했어요");
+      } catch {
+        showToast("삭제하지 못했어요");
+      }
+    },
+    [requestJson, showToast],
+  );
+
+  const handleDeleteInboxItem = useCallback(
+    async (id: string) => {
+      try {
+        await requestJson(`/api/inbox/${id}`, {
+          method: "DELETE",
+        });
+      } catch {
+        showToast("인박스 항목을 삭제하지 못했어요");
+      }
+    },
+    [requestJson, showToast],
+  );
 
   const renderScreen = () => {
     switch (screen) {
@@ -122,11 +183,11 @@ export function CalendarApp() {
       case "weekly":
         return <WeeklyScreen />;
       case "inbox":
-        return <InboxScreen />;
+        return <InboxScreen items={inboxItems} onDelete={handleDeleteInboxItem} />;
       case "preferences":
         return <PreferencesScreen />;
       case "mobile":
-        return <MobileToday events={events} suggestions={suggestions} />;
+        return <MobileToday events={events} suggestions={suggestions} onCapture={handleCapture} />;
       case "components":
         return <ComponentsScreen />;
       default:
@@ -137,7 +198,10 @@ export function CalendarApp() {
   return (
     <div className="app-shell">
       <Sidebar active={screen} onNavigate={setScreen} />
-      <div className="app-content">{renderScreen()}</div>
+      <div className="app-content" aria-busy={syncState === "loading"}>
+        {syncState === "error" ? <div className="sync-banner">로컬 저장소 연결을 확인해주세요</div> : null}
+        {renderScreen()}
+      </div>
       {toast ? (
         <Toast
           message={toast.message}
